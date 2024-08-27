@@ -1,0 +1,26 @@
+In this section, I answered questions based off of the chinook database.
+
+-- Show Customers (their full names, customer ID, and country) who are not in the US. (Hint: != or <> can be used to say "is not equal to").
+SELECT *
+FROM chinook.customers;
+
+SELECT CustomerID, FirstName, LastName, Country
+FROM chinook.customers
+WHERE Country <> 'USA';
+
+-- Show the Employees who are Sales Agents.
+SELECT *
+FROM chinook.employees;
+
+SELECT FirstName, LastName, Title
+FROM chinook.employees
+WHERE Title = 'Sales Support Agent';
+
+-- Show only the Customers from Brazil.
+
+SELECT *
+FROM chinook.customers;
+
+SELECT FirstName, LastName, Country
+FROM chinook.customers
+WHERE Country = 'Brazil';
