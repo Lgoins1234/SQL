@@ -1,0 +1,218 @@
+import streamlit as st
+import pandas as pd
+
+from snowflake.snowpark.context import get_active_session
+from snowflake.snowpark.functions import (
+    col, sum as sf_sum, to_date,
+    month, year, quarter
+)
+
+# ============================================================
+# Custom Error Classes
+# ============================================================
+class DataLoadError(Exception):
+    pass
+
+class TransformationError(Exception):
+    pass
+
+
+# ============================================================
+# Load Data
+# ============================================================
+def load_raw_sales(session):
+    try:
+        df = session.table("RAW_SALES")
+        df = df.with_column("DATE", to_date(col("DATE")))
+        return df
+    except Exception as e:
+        raise DataLoadError(f"Failed to load RAW_SALES: {e}")
+
+
+# ============================================================
+# Derived Columns (Step 4)
+# ============================================================
+def add_derived_columns(df):
+    try:
+        return (
+            df.with_column("MONTH", month(col("DATE")))
+              .with_column("YEAR", year(col("DATE")))
+              .with_column("QUARTER", quarter(col("DATE")))
+        )
+    except Exception as e:
+        raise TransformationError(f"Failed to add derived columns: {e}")
+
+
+# ============================================================
+# Step 4 Transformations
+# ============================================================
+def transform_sales(df):
+    try:
+        return {
+            "sales_by_month": (
+                df.group_by("YEAR", "MONTH")
+                  .agg(sf_sum("SALES").alias("TOTAL_SALES"))
+                  .sort("YEAR", "MONTH")
+            ),
+            "top_products": (
+                df.group_by("PRODUCT")
+                  .agg(sf_sum("SALES").alias("TOTAL_SALES"))
+                  .sort(col("TOTAL_SALES").desc())
+                  .limit(10)
+            ),
+            "sales_region_month": (
+                df.group_by("YEAR", "MONTH", "REGION")
+                  .agg(sf_sum("SALES").alias("TOTAL_SALES"))
+                  .sort("YEAR", "MONTH", "REGION")
+            )
+        }
+    except Exception as e:
+        raise TransformationError(f"Transformations failed: {e}")
+
+
+# ============================================================
+# Step 5 Metrics
+# ============================================================
+def product_sales_leaderboard(df):
+    df = df.with_column("TOTAL_SALES", col("UNITS_SOLD") * col("UNIT_PRICE"))
+    return (
+        df.group_by("PRODUCT")
+          .agg(sf_sum("TOTAL_SALES").alias("TOTAL_SALES"))
+          .sort(col("TOTAL_SALES").desc())
+    )
+
+
+def regional_sales_comparison(df):
+    df = df.with_column("TOTAL_SALES", col("UNITS_SOLD") * col("UNIT_PRICE"))
+    return (
+        df.group_by("REGION")
+          .agg(sf_sum("TOTAL_SALES").alias("TOTAL_SALES"))
+          .sort(col("TOTAL_SALES").desc())
+    )
+
+
+def monthly_trend_analysis(df):
+    df = df.with_column("TOTAL_SALES", col("UNITS_SOLD") * col("UNIT_PRICE"))
+    return (
+        df.group_by("YEAR", "MONTH")
+          .agg(sf_sum("TOTAL_SALES").alias("TOTAL_SALES"))
+          .sort("YEAR", "MONTH")
+    )
+
+
+def units_sold_vs_revenue(df):
+    df = df.with_column("TOTAL_SALES", col("UNITS_SOLD") * col("UNIT_PRICE"))
+    return (
+        df.group_by("PRODUCT")
+          .agg(
+              sf_sum("UNITS_SOLD").alias("TOTAL_UNITS_SOLD"),
+              sf_sum("TOTAL_SALES").alias("TOTAL_REVENUE")
+          )
+          .sort(col("TOTAL_REVENUE").desc())
+    )
+
+
+def average_order_value(df):
+    df = df.with_column("TOTAL_SALES", col("UNITS_SOLD") * col("UNIT_PRICE"))
+    return (
+        df.agg(
+            sf_sum("TOTAL_SALES").alias("TOTAL_REVENUE"),
+            sf_sum("UNITS_SOLD").alias("TOTAL_UNITS_SOLD")
+        )
+        .with_column("AOV", col("TOTAL_REVENUE") / col("TOTAL_UNITS_SOLD"))
+    )
+
+
+# ============================================================
+# Helper
+# ============================================================
+def to_pandas(sp_df):
+    return sp_df.to_pandas()
+
+
+# ============================================================
+# MAIN — Step 6 Dashboard
+# ============================================================
+def main():
+    st.title("Sales Analytics Dashboard (Snowpark + Streamlit)")
+    st.write(
+        "End-to-end analytics pipeline built in Snowflake using Snowpark "
+        "for transformations and Streamlit for dashboarding."
+    )
+
+    session = get_active_session()
+    df_raw = load_raw_sales(session)
+    df = add_derived_columns(df_raw)
+    transformed = transform_sales(df)
+
+    # -------------------------------
+    # Dashboard Tabs (STEP 6)
+    # -------------------------------
+    tab1, tab2, tab3 = st.tabs([
+        "Product Sales Performance",
+        "Monthly Trends",
+        "Regional Insights"
+    ])
+
+    # ========================================================
+    # TAB 1 — Product Sales Performance
+    # ========================================================
+    with tab1:
+        st.header("Product Sales Performance")
+        product_df = to_pandas(product_sales_leaderboard(df))
+
+        st.subheader("Total Revenue by Product")
+        st.bar_chart(product_df.set_index("PRODUCT")[["TOTAL_SALES"]])
+
+        product_df["PCT_OF_TOTAL"] = (
+            product_df["TOTAL_SALES"] / product_df["TOTAL_SALES"].sum()
+        ) * 100
+
+        st.subheader("Sales Percentage Contribution")
+        st.dataframe(product_df)
+
+        st.subheader("Units Sold vs Revenue")
+        st.bar_chart(
+            to_pandas(units_sold_vs_revenue(df))
+            .set_index("PRODUCT")[["TOTAL_UNITS_SOLD", "TOTAL_REVENUE"]]
+        )
+
+    # ========================================================
+    # TAB 2 — Monthly Trends
+    # ========================================================
+    with tab2:
+        st.header("Monthly Trends")
+
+        monthly_df = to_pandas(monthly_trend_analysis(df))
+        monthly_df["DATE"] = pd.to_datetime(
+            monthly_df["YEAR"].astype(str) + "-" +
+            monthly_df["MONTH"].astype(str) + "-01"
+        )
+
+        st.subheader("Month-over-Month Revenue")
+        st.line_chart(monthly_df.set_index("DATE")[["TOTAL_SALES"]])
+
+        aov_df = to_pandas(average_order_value(df))
+        st.subheader("Average Order Value (AOV)")
+        st.metric("Average Order Value", f"${aov_df['AOV'].iloc[0]:,.2f}")
+
+    # ========================================================
+    # TAB 3 — Regional Insights
+    # ========================================================
+    with tab3:
+        st.header("Regional Insights")
+
+        region_df = to_pandas(regional_sales_comparison(df))
+        st.subheader("Revenue by Region")
+        st.bar_chart(region_df.set_index("REGION")[["TOTAL_SALES"]])
+
+        st.subheader("Regional Sales Breakdown (Monthly)")
+        st.dataframe(to_pandas(transformed["sales_region_month"]))
+
+    st.success("Dashboard loaded successfully!")
+
+
+# ============================================================
+# Run App
+# ============================================================
+main()
