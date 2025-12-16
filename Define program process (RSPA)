@@ -1,0 +1,66 @@
+-- 1. Create an external stage to point to S3
+CREATE OR REPLACE STAGE aws_sales_stage
+  URL = 's3://my-analytics-bucket-sales/sales-file/'
+  STORAGE_INTEGRATION = my_s3_integration
+  FILE_FORMAT = (
+      TYPE = 'CSV'
+      FIELD_OPTIONALLY_ENCLOSED_BY = '"'
+      SKIP_HEADER = 1
+  );
+
+
+-- 2. Create a target table for raw data
+CREATE OR REPLACE TABLE RAW_SALES (
+  date        DATE,
+  product     STRING,
+  region      STRING,
+  units_sold  NUMBER,
+  unit_price  NUMBER(10,2),
+  sales       NUMBER(18,2)
+);
+
+USE DATABASE SNOWFLAKE_LEARNING_DB;
+USE SCHEMA PUBLIC;
+
+-- 3. Load CSV into RAW_SALES
+COPY INTO RAW_SALES
+FROM @aws_sales_stage
+ON_ERROR = 'CONTINUE';
+
+
+SHOW TABLES LIKE 'RAW_SALES';
+
+SELECT * FROM RAW_SALES LIMIT 10;
+
+LIST @aws_sales_stage;
+
+SELECT CURRENT_DATABASE(), CURRENT_SCHEMA();
+
+SHOW STORAGE INTEGRATIONS;
+
+DESC STORAGE INTEGRATION my_s3_integration;
+
+CREATE OR REPLACE STORAGE INTEGRATION my_s3_integration
+  TYPE = EXTERNAL_STAGE
+  STORAGE_PROVIDER = 'S3'
+  ENABLED = TRUE
+  STORAGE_AWS_ROLE_ARN = 'arn:aws:iam::196437631871:role/SnowflakeS3AccessRole'
+  STORAGE_ALLOWED_LOCATIONS = ('s3://my-analytics-bucket-sales/sales-file/');
+
+DESC STORAGE INTEGRATION my_s3_integration;
+
+CREATE OR REPLACE STAGE aws_sales_stage
+  URL = 's3://my-analytics-bucket-sales/sales-file/'
+  STORAGE_INTEGRATION = my_s3_integration
+  FILE_FORMAT = (TYPE = 'CSV' SKIP_HEADER = 1 FIELD_OPTIONALLY_ENCLOSED_BY='"');
+
+DESC STORAGE INTEGRATION my_s3_integration;
+
+LIST @aws_sales_stage;
+
+USE DATABASE SNOWFLAKE_LEARNING_DB;
+USE SCHEMA PUBLIC;
+
+SELECT * FROM RAW_SALES LIMIT 5;
+
+SELECT CURRENT_WAREHOUSE();
